@@ -45,20 +45,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text(
-        "Отправь фото, видео с подписью (caption) или просто текст — "
-        "я разошлю по всем каналам.\n\n/cancel — отмена"
-    )
-    return AWAIT_REPOST_CONTENT
+# ── РЕПОСТ (общая функция отправки) ──────────────────────────────────────────
 
-
-async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
+async def do_repost(msg, context):
     errors = []
-
     for channel in TARGET_CHANNELS:
         channel = channel.strip()
         try:
@@ -94,14 +84,39 @@ async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             errors.append(f"{channel}: {e}")
             logger.error(f"Repost error to {channel}: {e}")
+    return errors
 
+
+async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.message.reply_text(
+        "Отправь фото, видео с подписью или текст — разошлю по всем каналам.\n\n/cancel — отмена"
+    )
+    return AWAIT_REPOST_CONTENT
+
+
+async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    errors = await do_repost(update.message, context)
     if errors:
-        await msg.reply_text("⚠️ Ошибки при отправке:\n" + "\n".join(errors))
+        await update.message.reply_text("⚠️ Ошибки:\n" + "\n".join(errors))
     else:
-        await msg.reply_text(f"✅ Успешно отправлено в {len(TARGET_CHANNELS)} канал(ов)!")
-
+        await update.message.reply_text(f"✅ Отправлено в {len(TARGET_CHANNELS)} канал(ов)!")
     return ConversationHandler.END
 
+
+# Прямой репост фото/видео без нажатия кнопки
+async def direct_repost(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    errors = await do_repost(update.message, context)
+    if errors:
+        await update.message.reply_text("⚠️ Ошибки:\n" + "\n".join(errors))
+    else:
+        await update.message.reply_text(f"✅ Отправлено в {len(TARGET_CHANNELS)} канал(ов)!")
+
+
+# ── ПЛАНИРОВЩИК ──────────────────────────────────────────────────────────────
 
 async def schedule_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -128,7 +143,7 @@ async def schedule_get_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["schedule_dt"] = dt_aware
         await update.message.reply_text(
             f"🕐 Время: <b>{dt_naive.strftime('%d.%m.%Y %H:%M')}</b> (Екатеринбург)\n\n"
-            "Теперь отправь текст сообщения (поддерживается HTML-разметка):",
+            "Теперь отправь текст сообщения:",
             parse_mode="HTML"
         )
         return AWAIT_SCHEDULE_TEXT
@@ -148,7 +163,7 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     delay = (dt - now).total_seconds()
 
     if delay <= 0:
-        await update.message.reply_text("⛔ Время уже прошло пока ты писал. Начни заново.")
+        await update.message.reply_text("⛔ Время уже прошло. Начни заново.")
         return ConversationHandler.END
 
     async def send_scheduled(ctx: ContextTypes.DEFAULT_TYPE):
@@ -161,7 +176,7 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                logger.error(f"Scheduled send error to {channel}: {e}")
+                logger.error(f"Scheduled error to {channel}: {e}")
 
     context.job_queue.run_once(
         send_scheduled,
@@ -171,18 +186,22 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        f"✅ Сообщение запланировано!\n"
+        f"✅ Запланировано!\n"
         f"📅 <b>{dt.strftime('%d.%m.%Y %H:%M')}</b> (Екб)\n"
-        f"📢 Будет отправлено в <b>{len(TARGET_CHANNELS)}</b> канал(ов)",
+        f"📢 Каналов: <b>{len(TARGET_CHANNELS)}</b>",
         parse_mode="HTML"
     )
     return ConversationHandler.END
 
 
+# ── ОТМЕНА ───────────────────────────────────────────────────────────────────
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Действие отменено. /start — вернуться в меню.")
+    await update.message.reply_text("❌ Отменено. /start — в меню.")
     return ConversationHandler.END
 
+
+# ── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -211,6 +230,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv)
+    app.add_handler(MessageHandler(
+        filters.PHOTO | filters.VIDEO | filters.Document.VIDEO,
+        direct_repost
+    ))
 
     logger.info("Bot started...")
     app.run_polling(drop_pending_updates=True)
