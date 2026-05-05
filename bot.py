@@ -8,10 +8,19 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-ADMIN_ID  = int(os.environ["ADMIN_ID"])
-TARGET_CHANNELS = os.environ["TARGET_CHANNELS"].split(",")
-TIMEZONE = pytz.timezone("Asia/Yekaterinburg")
+# ═══════════════════════════════════════════════
+#              НАСТРОЙКИ — МЕНЯЙ ЗДЕСЬ
+# ═══════════════════════════════════════════════
+
+BOT_TOKEN = "YOUR_BOT_TOKEN"          # Токен от @BotFather
+ADMIN_ID  = 123456789                  # Твой Telegram user_id (@userinfobot)
+TARGET_CHANNELS = [                    # Каналы для отправки (бот должен быть админом!)
+    "@channel_one",
+    "@channel_two",
+]
+TIMEZONE = pytz.timezone("Asia/Yekaterinburg")  # Часовой пояс
+
+# ═══════════════════════════════════════════════
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,15 +31,6 @@ logger = logging.getLogger(__name__)
 AWAIT_REPOST_CONTENT = 1
 AWAIT_SCHEDULE_TIME  = 2
 AWAIT_SCHEDULE_TEXT  = 3
-
-
-def admin_only(func):
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != ADMIN_ID:
-            await update.message.reply_text("⛔ Нет доступа.")
-            return
-        return await func(update, context)
-    return wrapper
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,7 +151,6 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     async def send_scheduled(ctx: ContextTypes.DEFAULT_TYPE):
-        errs = []
         for channel in TARGET_CHANNELS:
             channel = channel.strip()
             try:
@@ -161,7 +160,6 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="HTML"
                 )
             except Exception as e:
-                errs.append(f"{channel}: {e}")
                 logger.error(f"Scheduled send error to {channel}: {e}")
 
     context.job_queue.run_once(
