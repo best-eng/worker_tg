@@ -15,7 +15,7 @@ from telegram.ext import (
 BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"          # Токен от @BotFather
 ADMIN_ID  = 1445696823               # Твой Telegram user_id (@userinfobot)
 TARGET_CHANNELS = [                    # Каналы для отправки (бот должен быть админом!)
-    "#5139820993"
+    "@JLNGSKGBLA"
 ]
 TIMEZONE = pytz.timezone("Asia/Yekaterinburg")  # Часовой пояс
 
