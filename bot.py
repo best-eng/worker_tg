@@ -1,4 +1,3 @@
-import os
 import logging
 from datetime import datetime
 import pytz
@@ -46,13 +45,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── REPOST FLOW ──────────────────────────────────────────────────────────────
-
 async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text(
-        "Отправь видео с подписью (caption) или просто текст — "
+        "Отправь фото, видео с подписью (caption) или просто текст — "
         "я разошлю по всем каналам.\n\n/cancel — отмена"
     )
     return AWAIT_REPOST_CONTENT
@@ -65,7 +62,14 @@ async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for channel in TARGET_CHANNELS:
         channel = channel.strip()
         try:
-            if msg.video:
+            if msg.photo:
+                await context.bot.send_photo(
+                    chat_id=channel,
+                    photo=msg.photo[-1].file_id,
+                    caption=msg.caption or "",
+                    parse_mode="HTML"
+                )
+            elif msg.video:
                 await context.bot.send_video(
                     chat_id=channel,
                     video=msg.video.file_id,
@@ -98,8 +102,6 @@ async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return ConversationHandler.END
 
-
-# ── SCHEDULE FLOW ────────────────────────────────────────────────────────────
 
 async def schedule_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -177,14 +179,10 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── CANCEL ───────────────────────────────────────────────────────────────────
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Действие отменено. /start — вернуться в меню.")
     return ConversationHandler.END
 
-
-# ── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
@@ -197,7 +195,7 @@ def main():
         states={
             AWAIT_REPOST_CONTENT: [
                 MessageHandler(
-                    (filters.VIDEO | filters.Document.VIDEO | filters.TEXT) & ~filters.COMMAND,
+                    (filters.PHOTO | filters.VIDEO | filters.Document.VIDEO | filters.TEXT) & ~filters.COMMAND,
                     repost_send
                 )
             ],
