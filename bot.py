@@ -12,7 +12,7 @@ from telegram.ext import (
 #              НАСТРОЙКИ — МЕНЯЙ ЗДЕСЬ
 # ═══════════════════════════════════════════════
 
-BOT_TOKEN = "YOUR_BOT_TOKEN"          # Токен от @BotFather
+BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"          # Токен от @BotFather
 ADMIN_ID  = 123456789                  # Твой Telegram user_id (@userinfobot)
 TARGET_CHANNELS = [                    # Каналы для отправки (бот должен быть админом!)
     "@channel_one",
