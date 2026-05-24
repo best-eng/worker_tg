@@ -1,6 +1,8 @@
 import logging
 import re
+from dataclasses import dataclass
 from datetime import datetime
+
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -14,11 +16,15 @@ from telegram.ext import (
 
 BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"  # Токен от @BotFather
 ADMIN_ID = 534474540  # Твой Telegram user_id (@userinfobot)
-TARGET_CHANNELS = [  # Можно @username, https://t.me/username, https://t.me/c/... или -100...
+
+TARGET_CHANNELS = [
     "@JLNGSKGBLA",
     "https://t.me/c/2667578680/1367"
+    # "https://t.me/c/2667578680/13699",      # просто чат, без темы
+    # "https://t.me/c/2667578680/11/13699",   # чат + topic_id=11
 ]
-TIMEZONE = pytz.timezone("Asia/Yekaterinburg")  # Часовой пояс
+
+TIMEZONE = pytz.timezone("Asia/Yekaterinburg")
 
 # ═══════════════════════════════════════════════
 
@@ -33,7 +39,14 @@ AWAIT_SCHEDULE_TIME = 2
 AWAIT_SCHEDULE_TEXT = 3
 
 
-def normalize_target(value: str) -> str:
+@dataclass
+class Target:
+    raw: str
+    chat_id: str
+    message_thread_id: int | None = None
+
+
+def normalize_target(value: str) -> Target:
     value = value.strip()
 
     if not value:
@@ -41,26 +54,47 @@ def normalize_target(value: str) -> str:
 
     # Уже готовый chat_id
     if re.fullmatch(r"-100\d+", value):
-        return value
+        return Target(raw=value, chat_id=value)
 
     # Публичный username
     if re.fullmatch(r"@\w{4,}", value):
-        return value
+        return Target(raw=value, chat_id=value)
 
-    # Ссылка на публичный канал/группу: https://t.me/name или t.me/name
+    # Ссылка на публичный канал/группу
     m_public = re.fullmatch(r"(?:https?://)?t\.me/([A-Za-z0-9_]{4,})/?", value)
     if m_public:
-        return f"@{m_public.group(1)}"
+        return Target(raw=value, chat_id=f"@{m_public.group(1)}")
 
-    # Ссылка вида https://t.me/c/2667578680/13699
-    m_private_msg = re.fullmatch(r"(?:https?://)?t\.me/c/(\d+)(?:/\d+)?(?:/\d+)?/?", value)
+    # Ссылка вида https://t.me/c/<chat>/<topic>/<message>
+    m_private_topic = re.fullmatch(
+        r"(?:https?://)?t\.me/c/(\d+)/(\d+)/(\d+)/?",
+        value
+    )
+    if m_private_topic:
+        internal_chat_id = m_private_topic.group(1)
+        topic_id = int(m_private_topic.group(2))
+        return Target(
+            raw=value,
+            chat_id=f"-100{internal_chat_id}",
+            message_thread_id=topic_id
+        )
+
+    # Ссылка вида https://t.me/c/<chat>/<message>
+    m_private_msg = re.fullmatch(
+        r"(?:https?://)?t\.me/c/(\d+)/(\d+)/?",
+        value
+    )
     if m_private_msg:
-        return f"-100{m_private_msg.group(1)}"
+        internal_chat_id = m_private_msg.group(1)
+        return Target(
+            raw=value,
+            chat_id=f"-100{internal_chat_id}"
+        )
 
     raise ValueError(f"Неизвестный формат target: {value}")
 
 
-def validate_targets(targets: list[str]) -> list[str]:
+def validate_targets(targets: list[str]) -> list[Target]:
     normalized = []
     invalid = []
 
@@ -94,48 +128,90 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# ── РЕПОСТ (общая функция отправки) ──────────────────────────────────────────
+async def send_to_target(bot, target: Target, *, text=None, photo=None, video=None, document=None, caption=None, forward_message=None):
+    kwargs = {"chat_id": target.chat_id}
+
+    if target.message_thread_id is not None:
+        kwargs["message_thread_id"] = target.message_thread_id
+
+    if photo:
+        await bot.send_photo(
+            photo=photo,
+            caption=caption or "",
+            parse_mode="HTML",
+            **kwargs
+        )
+    elif video:
+        await bot.send_video(
+            video=video,
+            caption=caption or "",
+            parse_mode="HTML",
+            **kwargs
+        )
+    elif document:
+        await bot.send_document(
+            document=document,
+            caption=caption or "",
+            parse_mode="HTML",
+            **kwargs
+        )
+    elif text:
+        await bot.send_message(
+            text=text,
+            parse_mode="HTML",
+            **kwargs
+        )
+    elif forward_message:
+        # Для forward message_thread_id обычно не применяется так же гибко, поэтому лучше fallback:
+        await forward_message.forward(chat_id=target.chat_id)
+    else:
+        raise ValueError("Нет данных для отправки")
+
+
+# ── РЕПОСТ ───────────────────────────────────────────────────────────────────
 
 async def do_repost(msg, context):
     errors = []
 
-    for raw_channel in TARGET_CHANNELS:
+    for target in TARGET_CHANNELS:
         try:
-            channel = normalize_target(raw_channel)
-
             if msg.photo:
-                await context.bot.send_photo(
-                    chat_id=channel,
+                await send_to_target(
+                    context.bot,
+                    target,
                     photo=msg.photo[-1].file_id,
-                    caption=msg.caption or "",
-                    parse_mode="HTML"
+                    caption=msg.caption or ""
                 )
             elif msg.video:
-                await context.bot.send_video(
-                    chat_id=channel,
+                await send_to_target(
+                    context.bot,
+                    target,
                     video=msg.video.file_id,
-                    caption=msg.caption or "",
-                    parse_mode="HTML"
+                    caption=msg.caption or ""
                 )
             elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video"):
-                await context.bot.send_document(
-                    chat_id=channel,
+                await send_to_target(
+                    context.bot,
+                    target,
                     document=msg.document.file_id,
-                    caption=msg.caption or "",
-                    parse_mode="HTML"
+                    caption=msg.caption or ""
                 )
             elif msg.text:
-                await context.bot.send_message(
-                    chat_id=channel,
-                    text=msg.text,
-                    parse_mode="HTML"
+                await send_to_target(
+                    context.bot,
+                    target,
+                    text=msg.text
                 )
             else:
-                await msg.forward(chat_id=channel)
+                await send_to_target(
+                    context.bot,
+                    target,
+                    forward_message=msg
+                )
 
         except Exception as e:
-            errors.append(f"{raw_channel}: {e}")
-            logger.error(f"Repost error to {raw_channel}: {e}")
+            errors.append(f"{target.raw}: {e}")
+            logger.error(f"Repost error to {target.raw}: {e}")
 
     return errors
 
@@ -151,19 +227,21 @@ async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def repost_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     errors = await do_repost(update.message, context)
+
     if errors:
         await update.message.reply_text("⚠️ Ошибки:\n" + "\n".join(errors))
     else:
         await update.message.reply_text(f"✅ Отправлено в {len(TARGET_CHANNELS)} канал(ов)!")
+
     return ConversationHandler.END
 
 
-# Прямой репост фото/видео без нажатия кнопки
 async def direct_repost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
     errors = await do_repost(update.message, context)
+
     if errors:
         await update.message.reply_text("⚠️ Ошибки:\n" + "\n".join(errors))
     else:
@@ -213,16 +291,15 @@ async def schedule_get_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def send_scheduled_message(ctx: ContextTypes.DEFAULT_TYPE):
-    for raw_channel in TARGET_CHANNELS:
+    for target in TARGET_CHANNELS:
         try:
-            channel = normalize_target(raw_channel)
-            await ctx.bot.send_message(
-                chat_id=channel,
-                text=ctx.job.data,
-                parse_mode="HTML"
+            await send_to_target(
+                ctx.bot,
+                target,
+                text=ctx.job.data
             )
         except Exception as e:
-            logger.error(f"Scheduled error to {raw_channel}: {e}")
+            logger.error(f"Scheduled error to {target.raw}: {e}")
 
 
 async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,6 +341,12 @@ def main():
     global TARGET_CHANNELS
     TARGET_CHANNELS = validate_targets(TARGET_CHANNELS)
 
+    for target in TARGET_CHANNELS:
+        logger.info(
+            f"Loaded target: raw={target.raw}, chat_id={target.chat_id}, "
+            f"message_thread_id={target.message_thread_id}"
+        )
+
     app = Application.builder().token(BOT_TOKEN).build()
 
     conv = ConversationHandler(
@@ -295,7 +378,7 @@ def main():
         direct_repost
     ))
 
-    logger.info(f"Bot started. Targets: {TARGET_CHANNELS}")
+    logger.info("Bot started...")
     app.run_polling(drop_pending_updates=True)
 
 
