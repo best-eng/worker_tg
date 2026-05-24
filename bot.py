@@ -16,8 +16,7 @@ BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"  # Токен от 
 ADMIN_ID = 534474540  # Твой Telegram user_id (@userinfobot)
 TARGET_CHANNELS = [  # Можно @username, https://t.me/username, https://t.me/c/... или -100...
     "@JLNGSKGBLA",
-    # "https://t.me/c/2667578680/13699",
-    # "-1002667578680",
+    "https://t.me/c/2667578680/1367"
 ]
 TIMEZONE = pytz.timezone("Asia/Yekaterinburg")  # Часовой пояс
 
