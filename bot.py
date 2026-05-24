@@ -15,10 +15,9 @@ ADMIN_ID = 534474540
 
 TARGET_CHANNELS = [
     "@JLNGSKGBLA",
-    # "https://t.me/public_channel_name",
+    "https://t.me/c/2667578680/1367",
     # "-1002667578680",
-    # "https://t.me/c/2667578680/1367",        # General / обычный чат
-    # "https://t.me/c/2667578680/25/1367",     # Topic 25
+    # "https://t.me/c/2667578680/25/1367",   # topic_id = 25
 ]
 
 TIMEZONE = pytz.timezone("Asia/Yekaterinburg")
@@ -106,23 +105,6 @@ def validate_targets(targets: list[str]) -> list[Target]:
     return normalized
 
 
-def build_runtime_target(base_target: Target, source_message) -> Target:
-    if (
-        base_target.message_thread_id is None
-        and getattr(source_message, "message_thread_id", None)
-        and getattr(source_message, "is_topic_message", False)
-        and str(getattr(source_message.chat, "id", "")) == str(base_target.chat_id)
-    ):
-        return Target(
-            raw=f"{base_target.raw} [runtime-topic]",
-            chat_id=base_target.chat_id,
-            message_thread_id=source_message.message_thread_id,
-            is_general_topic=(source_message.message_thread_id == 1)
-        )
-
-    return base_target
-
-
 async def send_to_target(
     bot,
     target: Target,
@@ -188,74 +170,42 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def debug_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
-        return
-
-    msg = update.effective_message
-    chat = update.effective_chat
-
-    lines = [
-        "🔍 DEBUG INFO",
-        f"chat_id: <code>{chat.id}</code>",
-        f"chat_type: <code>{chat.type}</code>",
-        f"is_forum: <code>{getattr(chat, 'is_forum', None)}</code>",
-        f"message_id: <code>{getattr(msg, 'message_id', None)}</code>",
-        f"message_thread_id: <code>{getattr(msg, 'message_thread_id', None)}</code>",
-        f"is_topic_message: <code>{getattr(msg, 'is_topic_message', None)}</code>",
-        f"direct_messages_topic: <code>{getattr(msg, 'direct_messages_topic', None)}</code>",
-        f"reply_to_message_id: <code>{getattr(getattr(msg, 'reply_to_message', None), 'message_id', None)}</code>",
-        f"forward_origin: <code>{type(getattr(msg, 'forward_origin', None)).__name__ if getattr(msg, 'forward_origin', None) else None}</code>",
-    ]
-
-    if getattr(msg, "message_thread_id", None):
-        lines.append("")
-        lines.append("Для отправки в эту тему используй:")
-        lines.append(f"<code>chat_id = {chat.id}</code>")
-        lines.append(f"<code>message_thread_id = {msg.message_thread_id}</code>")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
-
-
 async def do_repost(msg, context):
     errors = []
 
     for target in TARGET_CHANNELS:
         try:
-            runtime_target = build_runtime_target(target, msg)
-
             if msg.photo:
                 await send_to_target(
                     context.bot,
-                    runtime_target,
+                    target,
                     photo=msg.photo[-1].file_id,
                     caption=msg.caption or ""
                 )
             elif msg.video:
                 await send_to_target(
                     context.bot,
-                    runtime_target,
+                    target,
                     video=msg.video.file_id,
                     caption=msg.caption or ""
                 )
             elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video"):
                 await send_to_target(
                     context.bot,
-                    runtime_target,
+                    target,
                     document=msg.document.file_id,
                     caption=msg.caption or ""
                 )
             elif msg.text:
                 await send_to_target(
                     context.bot,
-                    runtime_target,
+                    target,
                     text=msg.text
                 )
             else:
                 await send_to_target(
                     context.bot,
-                    runtime_target,
+                    target,
                     forward_message=msg
                 )
 
@@ -270,9 +220,7 @@ async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text(
-        "Отправь фото, видео с подписью или текст — разошлю по всем каналам.\n\n"
-        "Если сообщение отправлено внутри topic, бот попробует использовать его message_thread_id.\n\n"
-        "/cancel — отмена"
+        "Отправь фото, видео с подписью или текст — разошлю по всем каналам.\n\n/cancel — отмена"
     )
     return AWAIT_REPOST_CONTENT
 
@@ -419,7 +367,6 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("debug_topic", debug_topic))
     app.add_handler(conv)
     app.add_handler(MessageHandler(
         filters.PHOTO | filters.VIDEO | filters.Document.VIDEO,
