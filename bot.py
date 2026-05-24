@@ -15,7 +15,7 @@ ADMIN_ID = 534474540
 
 TARGET_CHANNELS = [
     "@JLNGSKGBLA",
-    "https://t.me/c/2667578680/1367",
+    "https://t.me/c/2667578680/1367/3184",
     # "-1002667578680",
     # "https://t.me/c/2667578680/25/1367",   # topic_id = 25
 ]
