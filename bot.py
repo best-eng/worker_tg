@@ -10,23 +10,18 @@ from telegram.ext import (
     CallbackQueryHandler, ContextTypes, ConversationHandler, filters
 )
 
-# ═══════════════════════════════════════════════
-#              НАСТРОЙКИ — МЕНЯЙ ЗДЕСЬ
-# ═══════════════════════════════════════════════
-
-BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"  # Токен от @BotFather
-ADMIN_ID = 534474540  # Твой Telegram user_id (@userinfobot)
+BOT_TOKEN = "8633251064:AAGo4vRFCvpVLp6MqmRWS_dOGB5Z--JLmbo"
+ADMIN_ID = 534474540
 
 TARGET_CHANNELS = [
     "@JLNGSKGBLA",
-    "https://t.me/c/2667578680/1367"
-    # "https://t.me/c/2667578680/13699",      # просто чат, без темы
-    # "https://t.me/c/2667578680/11/13699",   # чат + topic_id=11
+    # "https://t.me/public_channel_name",
+    # "-1002667578680",
+    # "https://t.me/c/2667578680/1367",        # General / обычный чат
+    # "https://t.me/c/2667578680/25/1367",     # Topic 25
 ]
 
 TIMEZONE = pytz.timezone("Asia/Yekaterinburg")
-
-# ═══════════════════════════════════════════════
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,6 +39,7 @@ class Target:
     raw: str
     chat_id: str
     message_thread_id: int | None = None
+    is_general_topic: bool = False
 
 
 def normalize_target(value: str) -> Target:
@@ -52,20 +48,16 @@ def normalize_target(value: str) -> Target:
     if not value:
         raise ValueError("Пустой target")
 
-    # Уже готовый chat_id
     if re.fullmatch(r"-100\d+", value):
         return Target(raw=value, chat_id=value)
 
-    # Публичный username
     if re.fullmatch(r"@\w{4,}", value):
         return Target(raw=value, chat_id=value)
 
-    # Ссылка на публичный канал/группу
     m_public = re.fullmatch(r"(?:https?://)?t\.me/([A-Za-z0-9_]{4,})/?", value)
     if m_public:
         return Target(raw=value, chat_id=f"@{m_public.group(1)}")
 
-    # Ссылка вида https://t.me/c/<chat>/<topic>/<message>
     m_private_topic = re.fullmatch(
         r"(?:https?://)?t\.me/c/(\d+)/(\d+)/(\d+)/?",
         value
@@ -76,10 +68,10 @@ def normalize_target(value: str) -> Target:
         return Target(
             raw=value,
             chat_id=f"-100{internal_chat_id}",
-            message_thread_id=topic_id
+            message_thread_id=topic_id,
+            is_general_topic=(topic_id == 1)
         )
 
-    # Ссылка вида https://t.me/c/<chat>/<message>
     m_private_msg = re.fullmatch(
         r"(?:https?://)?t\.me/c/(\d+)/(\d+)/?",
         value
@@ -88,7 +80,9 @@ def normalize_target(value: str) -> Target:
         internal_chat_id = m_private_msg.group(1)
         return Target(
             raw=value,
-            chat_id=f"-100{internal_chat_id}"
+            chat_id=f"-100{internal_chat_id}",
+            message_thread_id=None,
+            is_general_topic=True
         )
 
     raise ValueError(f"Неизвестный формат target: {value}")
@@ -112,26 +106,37 @@ def validate_targets(targets: list[str]) -> list[Target]:
     return normalized
 
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
-        return
+def build_runtime_target(base_target: Target, source_message) -> Target:
+    if (
+        base_target.message_thread_id is None
+        and getattr(source_message, "message_thread_id", None)
+        and getattr(source_message, "is_topic_message", False)
+        and str(getattr(source_message.chat, "id", "")) == str(base_target.chat_id)
+    ):
+        return Target(
+            raw=f"{base_target.raw} [runtime-topic]",
+            chat_id=base_target.chat_id,
+            message_thread_id=source_message.message_thread_id,
+            is_general_topic=(source_message.message_thread_id == 1)
+        )
 
-    keyboard = [
-        [InlineKeyboardButton("📤 Репост в каналы", callback_data="repost")],
-        [InlineKeyboardButton("⏰ Запланировать сообщение", callback_data="schedule")],
-    ]
-
-    await update.message.reply_text(
-        "👋 Привет! Выбери действие:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    return base_target
 
 
-async def send_to_target(bot, target: Target, *, text=None, photo=None, video=None, document=None, caption=None, forward_message=None):
+async def send_to_target(
+    bot,
+    target: Target,
+    *,
+    text=None,
+    photo=None,
+    video=None,
+    document=None,
+    caption=None,
+    forward_message=None
+):
     kwargs = {"chat_id": target.chat_id}
 
-    if target.message_thread_id is not None:
+    if target.message_thread_id is not None and not target.is_general_topic:
         kwargs["message_thread_id"] = target.message_thread_id
 
     if photo:
@@ -162,50 +167,95 @@ async def send_to_target(bot, target: Target, *, text=None, photo=None, video=No
             **kwargs
         )
     elif forward_message:
-        # Для forward message_thread_id обычно не применяется так же гибко, поэтому лучше fallback:
         await forward_message.forward(chat_id=target.chat_id)
     else:
         raise ValueError("Нет данных для отправки")
 
 
-# ── РЕПОСТ ───────────────────────────────────────────────────────────────────
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("📤 Репост в каналы", callback_data="repost")],
+        [InlineKeyboardButton("⏰ Запланировать сообщение", callback_data="schedule")],
+    ]
+
+    await update.message.reply_text(
+        "👋 Привет! Выбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def debug_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
+
+    msg = update.effective_message
+    chat = update.effective_chat
+
+    lines = [
+        "🔍 DEBUG INFO",
+        f"chat_id: <code>{chat.id}</code>",
+        f"chat_type: <code>{chat.type}</code>",
+        f"is_forum: <code>{getattr(chat, 'is_forum', None)}</code>",
+        f"message_id: <code>{getattr(msg, 'message_id', None)}</code>",
+        f"message_thread_id: <code>{getattr(msg, 'message_thread_id', None)}</code>",
+        f"is_topic_message: <code>{getattr(msg, 'is_topic_message', None)}</code>",
+        f"direct_messages_topic: <code>{getattr(msg, 'direct_messages_topic', None)}</code>",
+        f"reply_to_message_id: <code>{getattr(getattr(msg, 'reply_to_message', None), 'message_id', None)}</code>",
+        f"forward_origin: <code>{type(getattr(msg, 'forward_origin', None)).__name__ if getattr(msg, 'forward_origin', None) else None}</code>",
+    ]
+
+    if getattr(msg, "message_thread_id", None):
+        lines.append("")
+        lines.append("Для отправки в эту тему используй:")
+        lines.append(f"<code>chat_id = {chat.id}</code>")
+        lines.append(f"<code>message_thread_id = {msg.message_thread_id}</code>")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
 
 async def do_repost(msg, context):
     errors = []
 
     for target in TARGET_CHANNELS:
         try:
+            runtime_target = build_runtime_target(target, msg)
+
             if msg.photo:
                 await send_to_target(
                     context.bot,
-                    target,
+                    runtime_target,
                     photo=msg.photo[-1].file_id,
                     caption=msg.caption or ""
                 )
             elif msg.video:
                 await send_to_target(
                     context.bot,
-                    target,
+                    runtime_target,
                     video=msg.video.file_id,
                     caption=msg.caption or ""
                 )
             elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("video"):
                 await send_to_target(
                     context.bot,
-                    target,
+                    runtime_target,
                     document=msg.document.file_id,
                     caption=msg.caption or ""
                 )
             elif msg.text:
                 await send_to_target(
                     context.bot,
-                    target,
+                    runtime_target,
                     text=msg.text
                 )
             else:
                 await send_to_target(
                     context.bot,
-                    target,
+                    runtime_target,
                     forward_message=msg
                 )
 
@@ -220,7 +270,9 @@ async def repost_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text(
-        "Отправь фото, видео с подписью или текст — разошлю по всем каналам.\n\n/cancel — отмена"
+        "Отправь фото, видео с подписью или текст — разошлю по всем каналам.\n\n"
+        "Если сообщение отправлено внутри topic, бот попробует использовать его message_thread_id.\n\n"
+        "/cancel — отмена"
     )
     return AWAIT_REPOST_CONTENT
 
@@ -247,8 +299,6 @@ async def direct_repost(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"✅ Отправлено в {len(TARGET_CHANNELS)} канал(ов)!")
 
-
-# ── ПЛАНИРОВЩИК ──────────────────────────────────────────────────────────────
 
 async def schedule_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -328,14 +378,10 @@ async def schedule_get_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-# ── ОТМЕНА ───────────────────────────────────────────────────────────────────
-
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Отменено. /start — в меню.")
     return ConversationHandler.END
 
-
-# ── MAIN ─────────────────────────────────────────────────────────────────────
 
 def main():
     global TARGET_CHANNELS
@@ -344,7 +390,8 @@ def main():
     for target in TARGET_CHANNELS:
         logger.info(
             f"Loaded target: raw={target.raw}, chat_id={target.chat_id}, "
-            f"message_thread_id={target.message_thread_id}"
+            f"message_thread_id={target.message_thread_id}, "
+            f"is_general_topic={target.is_general_topic}"
         )
 
     app = Application.builder().token(BOT_TOKEN).build()
@@ -372,6 +419,7 @@ def main():
     )
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("debug_topic", debug_topic))
     app.add_handler(conv)
     app.add_handler(MessageHandler(
         filters.PHOTO | filters.VIDEO | filters.Document.VIDEO,
